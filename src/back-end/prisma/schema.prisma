@@ -84,3 +84,7 @@ model DespesaUsuario {
   despesa       Despesa   @relation(fields: [despesaId], references: [id])
   despesaId     Int
 }
+
+model RegrasDaMoradia {
+    
+}

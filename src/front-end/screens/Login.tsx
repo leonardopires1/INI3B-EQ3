@@ -5,14 +5,61 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
+  Image,
 } from "react-native";
 import Checkbox from "expo-checkbox";
-import requisitaLogin from "../api/Login";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function Login({ navigation }: { navigation: any }) {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [manterConectado, setManterConectado] = useState(false);
+
+  async function requisitaLogin() {
+    // Verifica se os campos estão vazios
+    if (!email.trim() || !senha.trim()) {
+      alert("Por favor, preencha todos os campos.");
+      return false;
+    }
+
+    // Simulação de requisição de login
+    const access_token = await fetch("http://192.168.0.16:3000/auth/signin/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email,
+        senha
+      }),
+    });
+
+    if (access_token.ok && manterConectado) {
+      const data = await access_token.json();
+
+      if (data.access_token) {
+        try {
+          await AsyncStorage.setItem("userToken", data.access_token);
+          alert("Login bem-sucedido!");
+          // Navegar para a próxima tela ou realizar outra ação
+          return navigation.navigate("Home");
+        } catch (e) {
+          console.error("Failed to save the token", e);
+          alert("Falha ao salvar informações de login.");
+          return false;
+        }
+      } else {
+        alert("Token de acesso não encontrado na resposta.");
+        return false;
+      }
+    } else {
+      const errorData = await access_token
+        .json()
+        .catch(() => ({ message: "Erro desconhecido" }));
+      alert(`Falha no login: ${errorData.message || access_token.statusText}`);
+      return false;
+    }
+  }
 
   return (
     <View style={styles.container}>
@@ -54,7 +101,7 @@ export default function Login({ navigation }: { navigation: any }) {
 
         <TouchableOpacity
           style={styles.button}
-          onPress={() => requisitaLogin(email, senha, manterConectado, navigation)}
+          onPress={() => requisitaLogin()}
         >
           <Text style={styles.buttonText}>entrar</Text>
         </TouchableOpacity>

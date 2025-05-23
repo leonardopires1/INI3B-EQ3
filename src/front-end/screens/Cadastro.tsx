@@ -144,7 +144,6 @@ export default function Cadastro({ navigation }: { navigation: any }) {
         </TouchableOpacity>
       </>
     );
-    
   }
 
   function renderStepTwo() {
