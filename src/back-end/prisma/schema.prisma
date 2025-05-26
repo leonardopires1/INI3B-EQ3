@@ -88,6 +88,5 @@ model RegrasMoradia {
   moradiaId         Int
   regra             RegrasPredefinidas @relation(fields: [regraId], references: [id])
   regraId           Int
-
   @@unique([moradiaId, regraId]) 
 }
