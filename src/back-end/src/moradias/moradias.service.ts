@@ -10,6 +10,7 @@ import { UpdateMoradiaDto } from './dto/update-moradia.dto';
 import { PrismaService } from 'src/database/prisma.service';
 import { RegraMoradiaService } from 'src/regra-moradia/regra-moradia.service';
 import { ComodidadesMoradiaService } from 'src/comodidades-moradia/comodidades-moradia.service';
+import { GeocodingService } from 'src/common/services/geocoding.service';
 
 @Injectable()
 export class MoradiasService {
@@ -19,82 +20,26 @@ export class MoradiasService {
   private readonly regrasMoradiaService: RegraMoradiaService;
   @Inject()
   private readonly comodidadesMoradiaService: ComodidadesMoradiaService;
+  @Inject()
+  private readonly geocodingService: GeocodingService;
 
   /**
-   * Busca as coordenadas (latitude e longitude) a partir do CEP usando ViaCEP + Nominatim
+   * Busca as coordenadas (latitude e longitude) a partir do CEP usando ViaCEP + Google Maps/Nominatim
    */
   private async buscarCoordenadasPorCep(
     cep: string,
   ): Promise<{ latitude: number; longitude: number; endereco: string } | null> {
     try {
-      const cepLimpo = cep.replace(/\D/g, '');
-
-      if (cepLimpo.length !== 8) {
-        console.warn(`⚠️  CEP inválido: ${cep}`);
+      const result = await this.geocodingService.geocodeByCEP(cep);
+      
+      if (!result) {
         return null;
       }
-
-      console.log(`🔍 Buscando coordenadas para o CEP: ${cepLimpo}`);
-
-      // 1. Buscar endereço no ViaCEP
-      const viaCepResponse = await fetch(
-        `https://viacep.com.br/ws/${cepLimpo}/json/`,
-      );
-
-      if (!viaCepResponse.ok) {
-        console.error(`❌ Erro ao consultar ViaCEP: ${viaCepResponse.status}`);
-        return null;
-      }
-
-      const dadosViaCep = await viaCepResponse.json();
-
-      if (dadosViaCep.erro) {
-        console.warn(`⚠️  CEP não encontrado no ViaCEP: ${cepLimpo}`);
-        return null;
-      }
-
-      // Montar endereço completo
-      const enderecoCompleto = `${dadosViaCep.logradouro}, ${dadosViaCep.bairro}, ${dadosViaCep.localidade}, ${dadosViaCep.uf}, Brazil`;
-      console.log(`📍 Endereço encontrado: ${enderecoCompleto}`);
-
-      // 2. Buscar coordenadas no Nominatim (OpenStreetMap)
-      const query = encodeURIComponent(enderecoCompleto);
-      const nominatimResponse = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1`,
-        {
-          headers: {
-            'User-Agent': 'RoommateApp/1.0', // Nominatim requer User-Agent
-          },
-        },
-      );
-
-      if (!nominatimResponse.ok) {
-        console.error(
-          `❌ Erro ao consultar Nominatim: ${nominatimResponse.status}`,
-        );
-        return null;
-      }
-
-      const dadosNominatim = await nominatimResponse.json();
-
-      if (!dadosNominatim || dadosNominatim.length === 0) {
-        console.warn(
-          `⚠️  Coordenadas não encontradas para o endereço: ${enderecoCompleto}`,
-        );
-        return null;
-      }
-
-      const latitude = parseFloat(dadosNominatim[0].lat);
-      const longitude = parseFloat(dadosNominatim[0].lon);
-
-      console.log(
-        `✅ Coordenadas encontradas: Lat ${latitude}, Lng ${longitude}`,
-      );
 
       return {
-        latitude,
-        longitude,
-        endereco: `${dadosViaCep.logradouro}, ${dadosViaCep.bairro}, ${dadosViaCep.localidade}/${dadosViaCep.uf}`,
+        latitude: result.latitude,
+        longitude: result.longitude,
+        endereco: result.formattedAddress,
       };
     } catch (error) {
       console.error(`❌ Erro ao buscar coordenadas por CEP:`, error);
@@ -113,7 +58,7 @@ export class MoradiasService {
       tarefas = [],
       despesas = [],
       regras = { id: [] },
-      comodidades = [{ nome: '', descricao: '' }],
+  comodidades = [{ nome: '' }],
     } = createMoradiaDto;
 
     // Buscar coordenadas a partir do CEP
@@ -141,21 +86,37 @@ export class MoradiasService {
       );
     }
 
-    // Verifica se algum morador já está em outra moradia (exclui o dono da verificação)
-    const moradoresOcupados = await this.prisma.usuario.findMany({
-      where: {
-        id: { in: moradoresIds },
-        moradiaId: { not: null },
-      },
-      select: { id: true },
-    });
+    // Verifica se todos os IDs de moradores existem no banco
+    if (moradoresIds.length > 0) {
+      const usuariosExistentes = await this.prisma.usuario.findMany({
+        where: { id: { in: moradoresIds } },
+        select: { id: true },
+      });
+      const existentesIds = usuariosExistentes.map((u) => u.id);
+      const idsFaltantes = moradoresIds.filter((id) => !existentesIds.includes(id));
+      if (idsFaltantes.length > 0) {
+        throw new HttpException(
+          `Usuário(s) não encontrado(s): ${idsFaltantes.join(', ')}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
 
-    if (moradoresOcupados.length > 0) {
-      const ids = moradoresOcupados.map((u) => u.id).join(', ');
-      throw new HttpException(
-        `Usuário(s) já vinculados a outra moradia: ${ids}`,
-        HttpStatus.BAD_REQUEST,
-      );
+      // Verifica se algum morador já está em outra moradia (exclui o dono da verificação)
+      const moradoresOcupados = await this.prisma.usuario.findMany({
+        where: {
+          id: { in: moradoresIds },
+          moradiaId: { not: null },
+        },
+        select: { id: true },
+      });
+
+      if (moradoresOcupados.length > 0) {
+        const ids = moradoresOcupados.map((u) => u.id).join(', ');
+        throw new HttpException(
+          `Usuário(s) já vinculados a outra moradia: ${ids}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
     }
 
     // Usar transação para garantir que tudo seja feito atomicamente
@@ -188,11 +149,10 @@ export class MoradiasService {
 
           comodidades: {
             create: comodidades
-              .filter((comodidade) => comodidade.nome && comodidade.nome.trim())
               .map((comodidade) => ({
-                nome: comodidade.nome,
-                descricao: comodidade.descricao,
-              })),
+                nome: (comodidade.nome || '').trim(),
+              }))
+              .filter((c) => c.nome.length > 0),
           },
           // REMOVIDO: Dono não é mais automaticamente adicionado como morador
           // Ele pode ser adicionado separadamente se necessário
@@ -592,5 +552,47 @@ export class MoradiasService {
       console.error(`❌ Stack trace:`, error.stack);
       throw new NotFoundException('Moradia não encontrada ou erro ao remover');
     }
+  }
+
+  /**
+   * Re-geocodifica uma moradia existente usando o CEP e atualiza latitude/longitude
+   */
+  async geocodeMoradia(id: number) {
+    const moradia = await this.prisma.moradia.findUnique({ where: { id } });
+    if (!moradia) throw new NotFoundException('Moradia não encontrada');
+
+    if (!moradia.cep) {
+      throw new HttpException('Moradia não possui CEP cadastrado', HttpStatus.BAD_REQUEST);
+    }
+
+    const coordenadas = await this.buscarCoordenadasPorCep(moradia.cep);
+    if (!coordenadas) {
+      throw new HttpException('Não foi possível obter coordenadas para este CEP', HttpStatus.BAD_REQUEST);
+    }
+
+    const updated = await this.prisma.moradia.update({
+      where: { id },
+      data: {
+        latitude: coordenadas.latitude,
+        longitude: coordenadas.longitude,
+        cep: moradia.cep, // manter cep
+      },
+      select: {
+        id: true,
+        nome: true,
+        cep: true,
+        latitude: true,
+        longitude: true,
+        valorMensalidade: true,
+        imagemUrl: true,
+      },
+    });
+
+    console.log(`🔁 Moradia ${id} atualizada com coordenadas:`, {
+      latitude: updated.latitude,
+      longitude: updated.longitude,
+    });
+
+    return updated;
   }
 }
