@@ -26,6 +26,6 @@ Aplicativo para **buscar** e **gerenciar casas compartilhadas**, ideal para estu
 ### Para donos da casa:
 - 🏘️ Criar e editar casas compartilhadas
 - 👥 Adicionar ou remover moradores
-- 📊 Acompanhar dados e relatórios da república
+- 📊 Acompanhar dados e relatórios da república 
 
 ---
